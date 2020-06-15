@@ -1,18 +1,30 @@
 package main
 
 import (
+	"bufio"
 	"encoding/csv"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
+type Data struct {
+	URL    string
+	Status int
+	Size   int
+	time   float64
+}
+
 func makeRequest(url string, channel chan []string, wg *sync.WaitGroup) {
-	log.Print(url)
+
 	start := time.Now()
 
 	res, err := http.Get(url)
@@ -20,22 +32,34 @@ func makeRequest(url string, channel chan []string, wg *sync.WaitGroup) {
 		log.Fatal(err)
 	}
 
-	defer res.Body.Close()
+	defer func() {
+		res.Body.Close()
+		wg.Done()
+	}()
 
 	elapsed := time.Since(start).Seconds()
 
 	body, err := ioutil.ReadAll(res.Body)
 	if err != nil {
-		log.Print(err)
+		fmt.Print(err)
 	}
 
 	length := len(string(body))
 	status := res.StatusCode
+
+	if status != 200 {
+		fmt.Println("Cannot reach this URL, status: ", status)
+	}
 	channel <- []string{url, strconv.Itoa(status), strconv.Itoa(length), strconv.FormatFloat(elapsed, 'f', 6, 64)}
-	wg.Done()
 }
 
-func saveToCSV(name string, data [][]string) {
+func saveToCSV(name string, c chan []string) {
+	fmt.Println("Saving file ...")
+	data := [][]string{}
+
+	for val := range c {
+		data = append(data, val)
+	}
 
 	f, err := os.Create(name)
 	if err != nil {
@@ -59,35 +83,37 @@ func saveToCSV(name string, data [][]string) {
 
 func main() {
 	start := time.Now()
-
-	urls := []string{"https://habr.com/ru/post/215117/", "https://ru.wikipedia.org/wiki/HTTP", "https://developer.mozilla.org/ru/docs/Web/HTTP",
-		"https://ru.bmstu.wiki/HTTP_(Hypertext_Transfer_Protocol)", "https://proselyte.net/tutorials/http-tutorial/introduction/", "https://www.speedcheck.org/ru/wiki/http/",
-		"http://pki.gov.kz/index.php/ru/ncalayer", "http://www.edu.gov.kz/", "http://adilet.zan.kz/rus", "https://wiki.merionet.ru/servernye-resheniya/3/protocol-http/", "https://www.opennet.ru/docs/RUS/http/",
-		"https://www.w3.org/Protocols/HTTP/1.1/rfc2616bis/draft-lafon-rfc2616bis-03.html", "https://flaviocopes.com/http/", "https://www.extrahop.com/resources/protocols/http/",
-	}
-
-	data := [][]string{{"url", "status", "size", "time"}}
-	c := make(chan []string)
-	goroutines := 0
-
+	reader := bufio.NewReader(os.Stdin)
 	var wg sync.WaitGroup
+	c := make(chan []string)
+	msg := make(chan string)
+	killSignal := make(chan os.Signal, 1)
+	signal.Notify(killSignal, syscall.SIGINT, syscall.SIGTERM)
+	fmt.Println("Enter URL")
+	goroutinesCount := 0
+	go func() {
+		for {
+			text, _ := reader.ReadString('\n')
+			text = strings.Replace(text, "\r\n", "", -1)
+			if text != "" {
+				msg <- text
+			}
+		}
+	}()
 
-	for _, i := range urls {
-		wg.Add(1)
-		goroutines = goroutines + 1
-		go makeRequest(i, c, &wg)
+loop:
+	for {
+		select {
+		case <-killSignal:
+			fmt.Println("Exiting the program...")
+			go func() {
+				defer close(c)
+				wg.Wait()
+			}()
+			saveToCSV("test2.csv", c)
+			fmt.Println("Total time: ", time.Since(start))
+			fmt.Println("Total requests: ", goroutinesCount)
+			break loop
+		}
 	}
-
-	for i := 0; i < len(urls); i++ {
-		data = append(data, <-c)
-	}
-
-	saveToCSV("test.csv", data)
-
-	elapsed := time.Since(start).Seconds()
-
-	log.Print("Goroutines: ", goroutines)
-	log.Print("Time elapsed: ", elapsed)
-
-	// wg.Wait()
 }
