@@ -16,13 +16,6 @@ import (
 	"time"
 )
 
-type Data struct {
-	URL    string
-	Status int
-	Size   int
-	time   float64
-}
-
 func makeRequest(url string, channel chan []string, wg *sync.WaitGroup) {
 
 	start := time.Now()
