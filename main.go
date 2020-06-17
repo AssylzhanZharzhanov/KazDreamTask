@@ -107,6 +107,10 @@ loop:
 			fmt.Println("Total time: ", time.Since(start))
 			fmt.Println("Total requests: ", goroutinesCount)
 			break loop
+		case s := <-msg:
+			wg.Add(1)
+			go makeRequest(s, c, &wg)
+			goroutinesCount++
 		}
 	}
 }
